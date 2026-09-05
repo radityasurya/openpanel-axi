@@ -1,0 +1,49 @@
+{
+  "name": "openpanel-axi",
+  "version": "0.1.0",
+  "description": "AXI-compliant OpenPanel analytics CLI — visitors, pages, sources, and raw events with token-efficient TOON output",
+  "keywords": [
+    "axi",
+    "openpanel",
+    "analytics",
+    "web-analytics",
+    "agent",
+    "cli",
+    "toon"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/radityasurya/openpanel-axi.git"
+  },
+  "homepage": "https://github.com/radityasurya/openpanel-axi#readme",
+  "bugs": {
+    "url": "https://github.com/radityasurya/openpanel-axi/issues"
+  },
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "openpanel-axi": "bin/openpanel-axi.js"
+  },
+  "exports": {
+    ".": "./src/cli.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "skills",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test",
+    "build:skill": "node scripts/build-skill.mjs",
+    "check:skill": "node scripts/build-skill.mjs --check"
+  },
+  "dependencies": {
+    "axi-sdk-js": "^0.1.11",
+    "@toon-format/toon": "^0.9.0"
+  }
+}

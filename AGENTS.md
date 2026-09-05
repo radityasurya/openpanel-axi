@@ -1,0 +1,176 @@
+# Project agent memory
+
+This file is the project's committed home for project-intrinsic agent knowledge: build,
+test, release, architecture, and sharp-edge notes that should travel with the code.
+
+- Add durable project-specific notes here as they are discovered through real work.
+
+## What this is
+
+`openpanel-axi` is a direct client for the [OpenPanel](https://openpanel.dev) HTTP API, the
+way `cloudflare-axi` is for Cloudflare's. OpenPanel ships no CLI, so there is nothing to
+wrap: the tool owns auth (two headers), the window vocabulary, and the projection from
+analytics payloads down to an agent-sized schema.
+
+It **reads only**. There is a Track API for ingesting events and a Manage API for creating
+projects and clients; neither belongs here. An agent that can write to an analytics project
+can corrupt the numbers it is being asked to interpret.
+
+## Toolchain differs from gh-axi deliberately
+
+gh-axi is TypeScript + pnpm + vitest + eslint. This package is plain ESM JavaScript + npm +
+`node:test`, with no build step and no transpile — same reasoning as `coolify-axi`: the AXI
+contract is about the *interface* the agent sees, and a zero-build package keeps
+`npx -y openpanel-axi` fast. Do not convert for symmetry alone.
+
+## The project id must never be defaulted (`src/api.js#resolveProject`)
+
+The tempting shortcut is to send a placeholder project id and let the server scope the
+request to the client's own project. Current OpenPanel does exactly that for `read` clients
+(`resolveClientProjectId` ignores the path param unless the client is `root`) — but the
+release most self-hosted instances run reads `request.params.projectId` **straight off the
+URL with no client scoping at all**. A placeholder there returns `200` with an empty result
+set: not an error, just a project that appears to have no traffic.
+
+So `resolveProject` raises when neither `--project` nor `OPENPANEL_PROJECT_ID` is set. A
+wrong answer that looks like a right answer is the one failure mode this tool cannot ship.
+
+## Target the legacy insights routes, not the new ones (`src/commands/insights.js`)
+
+The API has two generations of analytics routes. Newer builds add `/overview`,
+`/pages/top`, `/pages/performance`, `/traffic/*`, `/funnel`, `/retention`, and an `/mcp`
+endpoint. The legacy set — `/metrics`, `/live`, `/pages`, and one route per column in
+`overviewColumns` (`/country`, `/browser`, `/utm_source`, …) — exists in **both**
+generations. Self-hosted instances lag the cloud by months, so the legacy set is the only
+surface that works everywhere. Adding a newer route means it silently 404s for half the
+users; if one is worth it, gate it and say so in the error.
+
+**Probing an instance needs no credentials.** Both routers authenticate in a `preHandler`
+hook, so an existing route answers `401` and a missing one answers `404`:
+
+```sh
+curl -so /dev/null -w '%{http_code}\n' https://openpanel.example.com/api/insights/x/metrics
+```
+
+That is how the route generation of a target instance was established, and how to check
+before adding anything new.
+
+## The default client cannot read (`src/api.js#apiError`)
+
+Every OpenPanel project ships with a client, and that client is `write` type — Track API
+only. Pointed at Insights or Export it returns `401 Invalid client credentials`, which reads
+exactly like a typo in the secret and sends the user off checking the wrong thing. The 401
+translation therefore leads with the client *type*, not the credential values.
+
+## Insights takes the project in the path, Export takes it in the query
+
+`/insights/:projectId/metrics` versus `/export/events?projectId=...`. Two conventions in one
+API; `insights()` exists so the path form is written once, and `events` passes `projectId`
+as a query parameter. Do not "unify" them — the server does not.
+
+## `--project` is the analytics project, so setup scopes with `--repo`
+
+`coolify-axi setup hooks --project` means "install into this repository". Here `--project`
+is a global that selects the OpenPanel project, so the install-scope flag is `--repo`
+instead. Keep them distinct: a boolean shadowing a global string flag parses, then means
+something else.
+
+## Repeated `--event` becomes a comma list (`src/commands/events.js`)
+
+`/export/events` accepts `event` as a repeated parameter or an array, but the query builder
+uses `URLSearchParams.set`, which keeps only the last value. Two `--event` flags would
+silently filter on one name — a plausible-looking, wrongly-scoped result. They are joined
+into a single comma-separated value instead.
+
+## Dimension plurals are derived, never cross-mapped (`src/commands/insights.js`)
+
+`top countries` resolves to `country` through a table derived from `DIMENSIONS`, so the two
+cannot drift. An earlier version aliased `referrers` to `referrer_name`, which is what a
+dashboard shows but *not* what the `referrer` column holds (the raw URL). Mapping a plural
+onto a different column is guessing; AXI §6 says fail loud instead.
+
+## Installable skill (`src/skill.js` → `skills/openpanel-axi/SKILL.md`)
+
+The shipped skill stays a minimal stub and defers to the CLI for actual guidance. CLI output
+(`openpanel-axi` dashboard, `--help`, `<command> --help`) is the single source of truth.
+Regenerate with `npm run build:skill`; CI runs `npm run check:skill` and
+`guard-generated-files.yml` blocks hand-edits under `skills/`.
+
+## Testing without an OpenPanel instance
+
+`tests/helpers.js` stubs `globalThis.fetch` with a path-keyed route table and returns the
+call log, so tests assert the exact requests sent — and the ones that must not be sent. The
+project-id test asserts `calls.length === 0`, which is the only way to catch a regression
+that would otherwise look like a project with no traffic.
+
+## Test discovery: `tests/`, not `test/`
+
+`node --test` on Node 20 cannot expand a glob itself, so the script is a bare `node --test`
+relying on default discovery — and default discovery treats *every* file under a directory
+named `test` as a test file, which would run `helpers.js` as an empty passing test. Naming
+the directory `tests` keeps `tests/*.test.js` matched by name and helpers out of the run.
+
+## Release process
+
+Releases are cut by release-please from conventional commits on `main`; merging the bot's
+release PR triggers `npm publish` via `.github/workflows/release-please.yml`. Do not
+hand-edit `CHANGELOG.md` or `.release-please-manifest.json` — a guard workflow blocks PRs
+that touch them.
+
+Publishing uses **npm trusted publishing (OIDC)**, not a stored token: the workflow's
+`id-token: write` permission lets npm verify the workflow's identity, so there is no
+`NPM_TOKEN` to rotate or leak, and provenance is attested automatically. The trust
+relationship is registered once, against the **workflow filename**:
+
+```sh
+npm trust github openpanel-axi --repo radityasurya/openpanel-axi --file release-please.yml --allow-publish
+```
+
+Renaming `release-please.yml` breaks publishing until it is re-registered.
+
+## Writes take a different client than reads (`src/api.js#credentials`)
+
+`read` clients cannot write and `write` clients cannot read — the same credential cannot do
+both unless it is `root`. So `track` resolves `OPENPANEL_WRITE_CLIENT_ID` first and falls
+back to the main pair (correct when that one is `root`, loudly refused when it is `read`).
+Do not "simplify" this to one credential pair: the split is what stops an agent handed a
+read client from writing into the dataset it is analysing.
+
+The 401 translation branches on the path for the same reason — `/track`, `/manage`, and the
+read surfaces each need a *different* client type, and a generic "check your credentials"
+sends the user off verifying a secret that was never wrong.
+
+## `clients create` must not inherit the API's default type
+
+`zCreateClient` defaults `type` to **`write`**. A client created without an explicit type is
+therefore the one type that cannot read analytics — which is exactly the trap that makes
+`401 Invalid client credentials` so confusing in the first place. `clients create` defaults
+to `read` and rejects anything outside `read|write|root`. Asserted in `tests/write.test.js`.
+
+## `track event` is the one non-idempotent command
+
+Every other command in this CLI can be re-run freely. `track event` cannot: each run appends
+another event, permanently, to the numbers the tool exists to interpret. Its output says so
+on every success, and its `--help` leads with it. If a "did it work?" check is ever added,
+it must read via `events --event <name>` — never re-send.
+
+`track` also rejects `--project`. The event lands in the project its write client belongs to,
+so accepting a project selector would imply targeting the command does not have.
+
+## `/track` answers 200 with no body (`src/api.js#op`)
+
+Every other route returns JSON, so an unparseable body is the signal that `OPENPANEL_API_URL`
+points at the dashboard rather than the API — that error message is load-bearing. `/track` is
+the exception, so it passes `allowEmpty: true` rather than the parse check being relaxed
+globally.
+
+## Instance version and the 2.3 upgrade (2026-09-06)
+
+The self-hosted reference instance ran **2.2.1** (image `lindesvard/openpanel-api:2`, built
+2026-03-21) and was upgraded to **2.3.0** by re-pulling the mutable `:2` tag and redeploying.
+The api container runs `CI=true pnpm -r run migrate:deploy` on start, so ten Prisma
+migrations applied automatically; ClickHouse needed nothing. After the upgrade `/overview`,
+`/pages/top`, `/traffic/*`, `/funnel`, and `/mcp` all exist.
+
+This does not change the rule above: the CLI still targets the legacy routes, because the
+next self-hosted instance it meets will not have been upgraded.
