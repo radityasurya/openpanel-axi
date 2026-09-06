@@ -96,3 +96,13 @@ test("--limit above the API cap is refused, not silently clamped", async () => {
   });
   assert.equal(calls.length, 0);
 });
+
+test("events asks for the fields the API omits by default", async () => {
+  const calls = mockOpenPanel({ "/export/events": listing([EVENT], 1) });
+  await eventsCommand([]);
+  assert.equal(
+    calls[0].query.includes,
+    "device,referrer",
+    "device and referrer are null unless requested, and would print as empty",
+  );
+});

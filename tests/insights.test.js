@@ -144,3 +144,27 @@ test("a 404 points at the API base URL rather than the resource", async () => {
   });
   assert.equal(API, "https://openpanel.test/api");
 });
+
+test("metrics rounds the duration and clamps float noise", async () => {
+  mockOpenPanel({
+    [`/insights/${PROJECT}/metrics`]: {
+      metrics: { ...METRICS.metrics, avg_session_duration: 962.0422199999999, bounce_rate: 62.6532 },
+      series: [],
+    },
+  });
+  const output = await metricsCommand([]);
+  assert.equal(output.metrics.avg_session_duration, 962, "sub-second precision is not information");
+  assert.equal(output.metrics.bounce_rate, 62.65);
+});
+
+test("an empty referrer is direct traffic, not an unknown source", async () => {
+  mockOpenPanel({
+    [`/insights/${PROJECT}/referrer_name`]: [{ name: null, sessions: 30, pageviews: 40 }],
+  });
+  const referrers = await topCommand(["referrer_name"]);
+  assert.equal(referrers.values[0].name, "(direct)");
+
+  mockOpenPanel({ [`/insights/${PROJECT}/country`]: [{ name: null, sessions: 2, pageviews: 2 }] });
+  const countries = await topCommand(["country"]);
+  assert.equal(countries.values[0].name, "(none)", "only referrer columns mean direct");
+});

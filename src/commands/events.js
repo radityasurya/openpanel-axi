@@ -27,6 +27,10 @@ const HELP = helpFor({
   ],
 });
 
+// `device` and `referrer` are omitted from the payload unless named in
+// `includes` — without this the default schema prints "-" for data that exists.
+const INCLUDES = "device,referrer";
+
 /** Events carry ~25 fields each; these are the ones that identify a hit. */
 function row(event, properties) {
   return {
@@ -35,7 +39,7 @@ function row(event, properties) {
     path: event.path || "-",
     country: event.country || "-",
     device: event.device || "-",
-    referrer: event.referrerName || event.referrer || "-",
+    referrer: event.referrerName || event.referrer || "(direct)",
     ...(properties ? { properties: event.properties ?? {} } : {}),
   };
 }
@@ -72,6 +76,7 @@ export async function eventsCommand(argv) {
       start: values.start,
       end: values.end,
       profileId: values.profile,
+      includes: INCLUDES,
       // The API accepts `event` repeated; URLSearchParams.set would drop all
       // but the last, so a multi-name filter goes over as a comma list.
       event: values.event?.join(","),

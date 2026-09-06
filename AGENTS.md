@@ -174,3 +174,28 @@ migrations applied automatically; ClickHouse needed nothing. After the upgrade `
 
 This does not change the rule above: the CLI still targets the legacy routes, because the
 next self-hosted instance it meets will not have been upgraded.
+
+## `/export/events` omits `device` and `referrer` unless asked (`src/commands/events.js`)
+
+The export payload carries `country`, `city`, `browser`, and `os` by default, but `device`
+and `referrer` come back **null** unless they are named in the `includes` query parameter.
+The default projection printed `-` for both, which reads as "no device recorded" rather than
+"not requested" — a plausible-looking wrong answer. `events` now always sends
+`includes=device,referrer`. Verified against a live instance, not inferred.
+
+## An empty referrer means direct traffic, not an unknown source
+
+`nullIf(column, '')` turns empty dimension values into `null`, and a generic `(none)` label
+is right for `country` or `browser`. It is wrong for the `referrer*` columns: an empty
+referrer is a visit that had no referrer, i.e. direct. On the reference project that is 30 of
+42 sessions — labelling the largest traffic source "(none)" would have an agent reporting the
+majority of traffic as unidentified. `label(value, empty)` takes the caption, and
+`isReferrer()` decides it.
+
+## Round the metrics payload once, in `api.js` (`metricValue`)
+
+ClickHouse returns `avg_session_duration` as `962.0422199999999`. Sub-second precision on a
+session average is not information, it is tokens. The rounding lives in `api.js` because
+**two** call sites render that payload — the `metrics` command and the no-args dashboard —
+and the first fix only patched the command, leaving the dashboard printing raw floats.
+Anything that formats a metric belongs there, not in a caller.

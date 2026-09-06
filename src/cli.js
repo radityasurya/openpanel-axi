@@ -9,6 +9,7 @@ import {
   hasCredentials,
   insights,
   label,
+  metricValue,
   op,
 } from "./api.js";
 import { BIN } from "./args.js";
@@ -112,19 +113,18 @@ async function home() {
     project,
     live: `${live?.visitors ?? 0} visitors active right now`,
     window: HOME_RANGE,
-    metrics: {
-      unique_visitors: summary.unique_visitors,
-      total_sessions: summary.total_sessions,
-      total_screen_views: summary.total_screen_views,
-      bounce_rate: summary.bounce_rate,
-      avg_session_duration: summary.avg_session_duration,
-    },
+    metrics: Object.fromEntries(
+      ["unique_visitors", "total_sessions", "total_screen_views", "bounce_rate", "avg_session_duration"].map(
+        (field) => [field, metricValue(field, summary[field])],
+      ),
+    ),
     pages: (pages ?? []).slice(0, HOME_ROWS).map((page) => ({
       path: label(page.path),
       sessions: page.sessions,
     })),
     sources: (sources ?? []).slice(0, HOME_ROWS).map((source) => ({
-      name: label(source.name),
+      // The dashboard's sources are referrer_name, where empty means direct.
+      name: label(source.name, "(direct)"),
       sessions: source.sessions,
     })),
     help: [

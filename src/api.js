@@ -245,7 +245,27 @@ export function dateFlagHelp(fallback = "7d") {
   };
 }
 
-/** Empty dimension values come back as null; name them rather than printing a blank. */
-export function label(value) {
-  return value === null || value === undefined || value === "" ? "(none)" : value;
+/**
+ * Empty dimension values come back as null; name them rather than printing a
+ * blank. For a referrer column an empty value is not "unknown" — it means the
+ * visit had no referrer, i.e. direct traffic, and an agent reading "(none)"
+ * would report an unidentified source instead.
+ */
+export function label(value, empty = "(none)") {
+  return value === null || value === undefined || value === "" ? empty : value;
+}
+
+export const isReferrer = (dimension) => dimension.startsWith("referrer");
+
+/**
+ * `avg_session_duration` is seconds, and ClickHouse hands it over with full
+ * float noise (`962.0422199999999`). Sub-second precision on a session average
+ * is not information, it is tokens — round it, and clamp the rest to 2 places.
+ * Both the `metrics` command and the dashboard render this payload, so the
+ * rounding lives here rather than in either of them.
+ */
+export function metricValue(field, value) {
+  if (typeof value !== "number") return value;
+  if (field === "avg_session_duration") return Math.round(value);
+  return Number(value.toFixed(2));
 }

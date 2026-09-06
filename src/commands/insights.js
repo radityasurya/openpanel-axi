@@ -5,7 +5,9 @@ import {
   dateFlagHelp,
   dateWindow,
   insights,
+  isReferrer,
   label,
+  metricValue,
   resolveProject,
 } from "../api.js";
 import { BIN, helpFor, parse, positiveInt, required, wantsHelp } from "../args.js";
@@ -53,15 +55,14 @@ const HELP = {
   }),
 };
 
-/** `metrics.avg_session_duration` is seconds; the rest are counts or percents. */
 function metricRow(metrics = {}) {
   const row = Object.fromEntries(
     METRIC_FIELDS.filter((field) => metrics[field] !== undefined).map((field) => [
       field,
-      metrics[field],
+      metricValue(field, metrics[field]),
     ]),
   );
-  if (metrics.total_revenue) row.total_revenue = metrics.total_revenue;
+  if (metrics.total_revenue) row.total_revenue = metricValue("total_revenue", metrics.total_revenue);
   return row;
 }
 
@@ -211,7 +212,7 @@ export async function topCommand(argv) {
     dimension,
     count: `${shown.length} of ${all.length} total`,
     values: shown.map((row) => ({
-      name: label(row.name),
+      name: label(row.name, isReferrer(dimension) ? "(direct)" : "(none)"),
       sessions: row.sessions,
       pageviews: row.pageviews,
     })),
