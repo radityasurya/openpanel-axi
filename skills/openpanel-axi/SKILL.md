@@ -73,6 +73,9 @@ project other than the default.
 - **Totals, not pages.** Lists report `count: N of M total` so the real size is known in one
   call, and the help line names the flag that shows the rest.
 - **Zero is stated.** An empty window says so explicitly instead of printing nothing.
+- **`--fields` widens a row.** `sessions`, `profiles` and `events` project a wide upstream
+  record down to what a decision needs; `--fields utm_source,os` adds columns back, and an
+  unknown name lists every field the record actually carries.
 - **Errors are structured** on stdout with a `help` block naming the fix — a write-only
   client, a wrong API URL, or rate limiting each say which. An unknown flag exits 2 listing
   the valid flags. Correct the flag; do not drop the filter.

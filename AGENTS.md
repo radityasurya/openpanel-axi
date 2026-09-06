@@ -299,3 +299,15 @@ traffic, and the response shapes here were captured from that instance rather th
 from the service code. The write path was verified with a `clients create` → `clients delete`
 round-trip, which exercises POST and DELETE without writing anything into the analytics data
 the tool exists to interpret. Do not verify `track` against a project whose numbers matter.
+
+## `--fields` is additive, and unknown names are fatal (`src/api.js#extraFields`)
+
+AXI §2 asks for a `--fields` escape hatch on wide nouns. Two decisions worth keeping:
+
+It **adds** to the default projection rather than replacing it, so a row an agent already
+knows how to read keeps its shape and the flag cannot accidentally remove the identifier.
+
+An unknown field name **raises**, listing every key the raw record carries. Silently ignoring
+it would hand back a row that looks filtered but is not — the same class of failure as the
+comma-joined `event` parameter. The available list comes from the payload itself, so it stays
+correct when upstream adds a column.

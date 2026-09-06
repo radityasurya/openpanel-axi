@@ -273,6 +273,38 @@ export function dateFlagHelp(fallback = "7d") {
 }
 
 /**
+ * AXI §2: the default schema is the smallest that supports a decision, and
+ * `--fields` is the escape hatch for a column it drops. Additive rather than
+ * replacing, so the row an agent already knows how to read stays intact, and
+ * an unknown name fails loud with what the payload actually offers rather than
+ * being silently ignored.
+ */
+export function extraFields(requested, source, command) {
+  if (!requested) return {};
+  const available = Object.keys(source ?? {});
+  const wanted = String(requested)
+    .split(",")
+    .map((name) => name.trim())
+    .filter(Boolean);
+
+  const unknown = wanted.filter((name) => !available.includes(name));
+  if (unknown.length) {
+    throw new AxiError(`unknown --fields ${unknown.join(", ")}`, "VALIDATION_ERROR", [
+      `available on this record: ${available.join(", ")}`,
+      `Run \`${BIN} ${command} --fields ${available.slice(0, 3).join(",")}\``,
+    ]);
+  }
+  return Object.fromEntries(wanted.map((name) => [name, source[name]]));
+}
+
+export const FIELDS_FLAG = { fields: { type: "string" } };
+
+export const fieldsHelp = {
+  "--fields": "Comma-separated extra columns from the raw record (an unknown name lists what exists)",
+};
+
+
+/**
  * Empty dimension values come back as null; name them rather than printing a
  * blank. For a referrer column an empty value is not "unknown" — it means the
  * visit had no referrer, i.e. direct traffic, and an agent reading "(none)"

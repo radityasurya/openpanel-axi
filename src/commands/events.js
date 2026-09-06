@@ -1,5 +1,5 @@
 import { AxiError } from "axi-sdk-js";
-import { insights, op, resolveProject } from "../api.js";
+import { FIELDS_FLAG, extraFields, fieldsHelp, insights, op, resolveProject } from "../api.js";
 import { BIN, helpFor, makeDispatcher, parse, positiveInt, required, wantsHelp } from "../args.js";
 
 const DEFAULT_LIMIT = 20;
@@ -19,6 +19,7 @@ const LIST_HELP = helpFor({
     "--end": "Only events at or before this date",
     "--profile": "Only events for this profile id",
     "--properties": "Include each event's custom properties",
+    ...fieldsHelp,
   },
   examples: [
     `${BIN} events`,
@@ -32,7 +33,7 @@ const LIST_HELP = helpFor({
 const INCLUDES = "device,referrer";
 
 /** Events carry ~25 fields each; these are the ones that identify a hit. */
-function row(event, properties) {
+function row(event, properties, fields) {
   return {
     time: String(event.createdAt ?? "").replace(".000Z", "Z"),
     name: event.name,
@@ -41,6 +42,7 @@ function row(event, properties) {
     device: event.device || "-",
     referrer: event.referrerName || event.referrer || "(direct)",
     ...(properties ? { properties: event.properties ?? {} } : {}),
+    ...extraFields(fields, event, "events"),
   };
 }
 
@@ -56,6 +58,7 @@ async function list(argv) {
       end: { type: "string" },
       profile: { type: "string" },
       properties: { type: "boolean" },
+      ...FIELDS_FLAG,
     },
   });
   const projectId = resolveProject(values.project);
@@ -99,7 +102,7 @@ async function list(argv) {
   return {
     count: `${data.length} of ${total} total`,
     page: `${payload?.meta?.current ?? page} of ${payload?.meta?.pages ?? 1}`,
-    events: data.map((event) => row(event, values.properties)),
+    events: data.map((event) => row(event, values.properties, values.fields)),
     help: [
       ...(data.length < total ? [`Run \`${BIN} events --page ${page + 1}\` for the next page`] : []),
       ...(values.properties ? [] : [`Run \`${BIN} events --properties\` to include custom properties`]),

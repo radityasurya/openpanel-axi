@@ -1,4 +1,14 @@
-import { DATE_FLAGS, dateFlagHelp, dateWindow, insights, metricValue, resolveProject } from "../api.js";
+import {
+  DATE_FLAGS,
+  FIELDS_FLAG,
+  dateFlagHelp,
+  dateWindow,
+  extraFields,
+  fieldsHelp,
+  insights,
+  metricValue,
+  resolveProject,
+} from "../api.js";
 import { BIN, helpFor, makeDispatcher, parse, positiveInt, required, wantsHelp } from "../args.js";
 
 const DEFAULT_LIMIT = 20;
@@ -25,6 +35,7 @@ const HELP = {
       "--inactive-days": "Only profiles not seen for this many days",
       "--performed": "Only profiles that fired this event",
       "--limit": `Rows to show, max 100 (default ${DEFAULT_LIMIT})`,
+      ...fieldsHelp,
     },
     examples: [`${BIN} profiles --country NL`, `${BIN} profiles --performed signup --min-sessions 3`],
   }),
@@ -57,22 +68,24 @@ const HELP = {
       "--os": "Only sessions on this OS",
       "--profile": "Only sessions for this profile id",
       "--limit": `Rows to show, max 100 (default ${DEFAULT_LIMIT})`,
+      ...fieldsHelp,
     },
     examples: [`${BIN} sessions --limit 5`, `${BIN} sessions --country NL --device mobile`],
   }),
 };
 
-function profileRow(profile) {
+function profileRow(profile, fields) {
   const name = [profile.first_name, profile.last_name].filter(Boolean).join(" ");
   return {
     id: profile.id,
     ...(name ? { name } : {}),
     ...(profile.email ? { email: profile.email } : {}),
     last_seen: String(profile.last_seen_at ?? "").slice(0, 19).replace("T", " "),
+    ...extraFields(fields, profile, "profiles"),
   };
 }
 
-function sessionRow(session) {
+function sessionRow(session, fields) {
   return {
     id: session.id,
     started: String(session.created_at ?? "").slice(0, 19).replace("T", " "),
@@ -83,6 +96,7 @@ function sessionRow(session) {
     exit: session.exit_path || "-",
     country: session.country || "-",
     device: session.device || "-",
+    ...extraFields(fields, session, "sessions"),
   };
 }
 
@@ -98,6 +112,7 @@ async function list(argv) {
       "inactive-days": { type: "string" },
       performed: { type: "string" },
       limit: { type: "string" },
+      ...FIELDS_FLAG,
     },
   });
   const limit = positiveInt(values.limit, "--limit", DEFAULT_LIMIT);
@@ -125,7 +140,7 @@ async function list(argv) {
   }
   return {
     count: `${profiles.length} shown`,
-    profiles: profiles.map(profileRow),
+    profiles: profiles.map((profile) => profileRow(profile, values.fields)),
     help: [`Run \`${BIN} profiles get <id>\` for one profile and its recent events`],
   };
 }
@@ -216,6 +231,7 @@ export async function sessionsCommand(argv) {
       os: { type: "string" },
       profile: { type: "string" },
       limit: { type: "string" },
+      ...FIELDS_FLAG,
     },
   });
   const query = dateWindow(values);
@@ -241,6 +257,6 @@ export async function sessionsCommand(argv) {
     window: query.range,
     count: `${sessions.length} shown`,
     bounced: `${bounced} of ${sessions.length}`,
-    sessions: sessions.map(sessionRow),
+    sessions: sessions.map((session) => sessionRow(session, values.fields)),
   };
 }

@@ -210,6 +210,9 @@ Flags must come **after** the command (`openpanel-axi pages --limit 25`, not
   the only such command; `track identify` and `clients delete` are safe to repeat.
 - **Never guesses the project.** Missing project id stops the command instead of returning
   an empty result set that reads as "no traffic".
+- **`--fields` widens a row.** `sessions` carries 38 upstream columns and shows 9; `profiles`
+  shows 4 of 11. `--fields utm_source,os` adds them back, and an unknown name lists every
+  field the record actually has rather than being ignored.
 - **Totals, not pages.** Lists report `count: N of M total`, and the help line names the flag
   that shows the rest.
 - **Zero is stated.** An empty window says `0 sessions recorded in this window`, so an agent

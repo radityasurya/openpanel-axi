@@ -221,3 +221,39 @@ test("gsc --series opts back into the full breakdown", async () => {
   assert.equal(output.series[0].ctr, "50.0%");
   assert.match(output.pages, /0 pages recorded/);
 });
+
+test("--fields adds columns without replacing the default schema", async () => {
+  mockOpenPanel({
+    [`/insights/${PROJECT}/sessions`]: [
+      { id: "s1", created_at: "2026-09-02T00:17:22.000Z", duration: 15400, screen_view_count: 2, is_bounce: false, entry_path: "/", exit_path: "/x", country: "US", device: "desktop", os: "Windows", utm_source: "newsletter" },
+    ],
+  });
+  const output = await sessionsCommand(["--fields", "os,utm_source"]);
+  const row = output.sessions[0];
+  // The default columns an agent already reads must survive.
+  assert.equal(row.id, "s1");
+  assert.equal(row.duration_s, 15);
+  assert.equal(row.os, "Windows");
+  assert.equal(row.utm_source, "newsletter");
+});
+
+test("an unknown --fields name lists what the record actually has", async () => {
+  mockOpenPanel({
+    [`/insights/${PROJECT}/sessions`]: [{ id: "s1", created_at: "2026-09-02T00:00:00.000Z", os: "Windows" }],
+  });
+  await assert.rejects(() => sessionsCommand(["--fields", "operating_system"]), (error) => {
+    assert.equal(error.code, "VALIDATION_ERROR");
+    // §6: fold the follow-up --help call into the error itself.
+    assert.match(error.suggestions.join(" "), /available on this record: .*\bos\b/);
+    return true;
+  });
+});
+
+test("--fields works on events and profiles too", async () => {
+  mockOpenPanel({
+    [`/insights/${PROJECT}/profiles`]: [{ id: "p1", first_name: "Ada", last_seen_at: "2026-09-05T00:00:00.000Z", city: "Rotterdam" }],
+  });
+  const profiles = await profilesCommand(["--fields", "city"]);
+  assert.equal(profiles.profiles[0].city, "Rotterdam");
+  assert.equal(profiles.profiles[0].name, "Ada");
+});
