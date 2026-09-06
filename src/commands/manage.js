@@ -1,5 +1,5 @@
 import { AxiError } from "axi-sdk-js";
-import { op } from "../api.js";
+import { op, resolveProject } from "../api.js";
 import { BIN, helpFor, makeDispatcher, parse, required, wantsHelp } from "../args.js";
 
 const CLIENT_TYPES = ["read", "write", "root"];
@@ -40,9 +40,9 @@ const HELP = {
   }),
 };
 
-export async function projectsCommand(argv) {
+async function projectsList(argv) {
   if (wantsHelp(argv)) return HELP.projects;
-  parse(argv, { command: "projects" });
+  parse(argv, { command: "projects list" });
 
   // Manage is the only surface that can enumerate projects, and it is root-only.
   // A read client's 401 is translated in api.js with the root explanation.
@@ -173,6 +173,242 @@ export const clientsCommand = makeDispatcher(
       list: "List API clients and their types",
       create: "Create a client and print its secret once",
       delete: "Permanently delete a client by id",
+    },
+  },
+);
+
+
+const PROJECT_TYPES = ["website", "app", "backend"];
+
+const PROJECT_HELP = {
+  create: helpFor({
+    command: "projects create",
+    description: "Create a project. A default `write` client is created with it and shown once",
+    usage: `${BIN} projects create --name <name> [--domain <url>] [--type website|app|backend] [--cors <origin>]`,
+    flags: {
+      "--name": "Project name (required)",
+      "--domain": "Site URL, e.g. https://example.com",
+      "--type": `One or more of ${PROJECT_TYPES.join(", ")} (repeatable)`,
+      "--cors": "Allowed origin (repeatable)",
+      "--cross-domain": "Track visitors across subdomains",
+    },
+    examples: [`${BIN} projects create --name "My Blog" --domain https://blog.example.com --type website`],
+  }),
+  update: helpFor({
+    command: "projects update",
+    description: "Change a project's name, domain, or CORS origins",
+    usage: `${BIN} projects update <id> [--name <name>] [--domain <url>] [--cors <origin>]`,
+    flags: {
+      "--name": "New name",
+      "--domain": "New site URL (pass an empty string to clear)",
+      "--cors": "Replace the allowed origins (repeatable)",
+      "--cross-domain": "Enable cross-subdomain tracking",
+      "--no-cross-domain": "Disable it",
+    },
+    examples: [`${BIN} projects update myblog --domain https://new.example.com`],
+  }),
+};
+
+async function projectsCreate(argv) {
+  if (wantsHelp(argv)) return PROJECT_HELP.create;
+  const { values } = parse(argv, {
+    command: "projects create",
+    flags: {
+      name: { type: "string" },
+      domain: { type: "string" },
+      type: { type: "string", multiple: true },
+      cors: { type: "string", multiple: true },
+      "cross-domain": { type: "boolean" },
+    },
+  });
+  const name = required(values.name, "--name", "projects create", `${BIN} projects create --name "My Blog"`);
+  for (const type of values.type ?? []) {
+    if (!PROJECT_TYPES.includes(type)) {
+      throw new AxiError(`unknown --type ${type}`, "VALIDATION_ERROR", [
+        `valid types: ${PROJECT_TYPES.join(", ")}`,
+      ]);
+    }
+  }
+
+  const payload = await op("/manage/projects", {
+    method: "POST",
+    body: {
+      name,
+      ...(values.domain ? { domain: values.domain } : {}),
+      types: values.type ?? [],
+      cors: values.cors ?? [],
+      ...(values["cross-domain"] ? { crossDomain: true } : {}),
+    },
+  });
+  const project = payload?.data ?? payload ?? {};
+  // Creating a project mints its default write client, and that secret is the
+  // one thing here that cannot be fetched again.
+  const client = project.client ?? payload?.client;
+
+  return {
+    project: { id: project.id, name: project.name, domain: project.domain || "-" },
+    ...(client
+      ? {
+          client: { id: client.id, type: client.type ?? "write" },
+          secret: client.secret,
+          note: "this write client's secret is shown once — store it now",
+        }
+      : {}),
+    help: [
+      `Run \`${BIN} metrics --project ${project.id}\` once it receives traffic`,
+      `Run \`${BIN} clients create --name "reads" --type read --project ${project.id}\` to read it`,
+    ],
+  };
+}
+
+async function projectsUpdate(argv) {
+  if (wantsHelp(argv)) return PROJECT_HELP.update;
+  const { values, positionals } = parse(argv, {
+    command: "projects update",
+    flags: {
+      name: { type: "string" },
+      domain: { type: "string" },
+      cors: { type: "string", multiple: true },
+      "cross-domain": { type: "boolean" },
+      "no-cross-domain": { type: "boolean" },
+    },
+  });
+  const id = required(positionals[0], "<id>", "projects update", `${BIN} projects update myblog --name "New"`);
+
+  const body = {
+    ...(values.name !== undefined ? { name: values.name } : {}),
+    ...(values.domain !== undefined ? { domain: values.domain } : {}),
+    ...(values.cors ? { cors: values.cors } : {}),
+    ...(values["cross-domain"] ? { crossDomain: true } : {}),
+    ...(values["no-cross-domain"] ? { crossDomain: false } : {}),
+  };
+  if (Object.keys(body).length === 0) {
+    throw new AxiError("nothing to update", "VALIDATION_ERROR", [
+      "Pass at least one of --name, --domain, --cors, --cross-domain, --no-cross-domain",
+    ]);
+  }
+
+  const payload = await op(`/manage/projects/${encodeURIComponent(id)}`, { method: "PATCH", body });
+  const project = payload?.data ?? {};
+  return {
+    project: { id: project.id ?? id, name: project.name, domain: project.domain || "-" },
+    updated: Object.keys(body).join(", "),
+  };
+}
+
+export const projectsCommand = makeDispatcher(
+  "projects",
+  { list: projectsList, create: projectsCreate, update: projectsUpdate },
+  {
+    fallback: "list",
+    summary: {
+      list: "List projects and their ids (default)",
+      create: "Create a project and print its first client secret",
+      update: "Change a project's name, domain, or CORS origins",
+    },
+  },
+);
+
+const REFERENCE_HELP = {
+  list: helpFor({
+    command: "references list",
+    description: "Timeline markers — releases, campaigns, anything to correlate with the numbers",
+    usage: `${BIN} references list [--project <id>]`,
+    examples: [`${BIN} references`],
+  }),
+  create: helpFor({
+    command: "references create",
+    description: "Mark a moment on the analytics timeline",
+    usage: `${BIN} references create --title <title> --at <datetime> [--description <text>] [--project <id>]`,
+    flags: {
+      "--title": "What happened (required)",
+      "--at": "When, as an ISO datetime, e.g. 2026-09-06T12:00:00Z (required)",
+      "--description": "Longer note",
+    },
+    examples: [`${BIN} references create --title "v2 launch" --at 2026-09-06T12:00:00Z`],
+  }),
+  update: helpFor({
+    command: "references update",
+    description: "Change a marker's title, description, or time",
+    usage: `${BIN} references update <id> [--title <t>] [--at <datetime>] [--description <text>]`,
+    examples: [`${BIN} references update <id> --title "v2.1 launch"`],
+  }),
+};
+
+async function referencesList(argv) {
+  if (wantsHelp(argv)) return REFERENCE_HELP.list;
+  const { values } = parse(argv, { command: "references list" });
+  const payload = await op("/manage/references", { query: { projectId: values.project } });
+  const rows = payload?.data ?? [];
+  if (rows.length === 0) {
+    return {
+      references: "0 timeline markers",
+      help: [`Run \`${BIN} references create --title "<what>" --at <datetime>\` to add one`],
+    };
+  }
+  return {
+    count: `${rows.length} total`,
+    references: rows.map((reference) => ({
+      id: reference.id,
+      title: reference.title,
+      at: String(reference.datetime ?? "").slice(0, 19).replace("T", " "),
+      project: reference.projectId ?? "-",
+    })),
+  };
+}
+
+async function referencesCreate(argv) {
+  if (wantsHelp(argv)) return REFERENCE_HELP.create;
+  const { values } = parse(argv, {
+    command: "references create",
+    flags: { title: { type: "string" }, at: { type: "string" }, description: { type: "string" } },
+  });
+  const title = required(values.title, "--title", "references create", `${BIN} references create --title "v2 launch" --at 2026-09-06T12:00:00Z`);
+  const datetime = required(values.at, "--at", "references create", `${BIN} references create --title "${title}" --at 2026-09-06T12:00:00Z`);
+  const projectId = resolveProject(values.project);
+
+  const payload = await op("/manage/references", {
+    method: "POST",
+    body: { projectId, title, datetime, ...(values.description ? { description: values.description } : {}) },
+  });
+  const reference = payload?.data ?? {};
+  return {
+    reference: { id: reference.id, title: reference.title ?? title, at: datetime, project: projectId },
+    help: [`Run \`${BIN} references\` to see every marker`],
+  };
+}
+
+async function referencesUpdate(argv) {
+  if (wantsHelp(argv)) return REFERENCE_HELP.update;
+  const { values, positionals } = parse(argv, {
+    command: "references update",
+    flags: { title: { type: "string" }, at: { type: "string" }, description: { type: "string" } },
+  });
+  const id = required(positionals[0], "<id>", "references update", `${BIN} references update <id> --title "..."`);
+  const body = {
+    ...(values.title !== undefined ? { title: values.title } : {}),
+    ...(values.at !== undefined ? { datetime: values.at } : {}),
+    ...(values.description !== undefined ? { description: values.description } : {}),
+  };
+  if (Object.keys(body).length === 0) {
+    throw new AxiError("nothing to update", "VALIDATION_ERROR", [
+      "Pass at least one of --title, --at, --description",
+    ]);
+  }
+  const payload = await op(`/manage/references/${encodeURIComponent(id)}`, { method: "PATCH", body });
+  const reference = payload?.data ?? {};
+  return { reference: { id: reference.id ?? id, title: reference.title }, updated: Object.keys(body).join(", ") };
+}
+
+export const referencesCommand = makeDispatcher(
+  "references",
+  { list: referencesList, create: referencesCreate, update: referencesUpdate },
+  {
+    fallback: "list",
+    summary: {
+      list: "Timeline markers (default)",
+      create: "Mark a moment on the timeline",
+      update: "Change a marker",
     },
   },
 );

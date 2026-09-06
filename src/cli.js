@@ -13,9 +13,18 @@ import {
   op,
 } from "./api.js";
 import { BIN } from "./args.js";
+import {
+  activeUsersCommand,
+  engagementCommand,
+  flowCommand,
+  funnelCommand,
+  retentionCommand,
+} from "./commands/analytics.js";
 import { eventsCommand } from "./commands/events.js";
+import { gscCommand } from "./commands/gsc.js";
 import { liveCommand, metricsCommand, pagesCommand, topCommand } from "./commands/insights.js";
-import { clientsCommand, projectsCommand } from "./commands/manage.js";
+import { clientsCommand, projectsCommand, referencesCommand } from "./commands/manage.js";
+import { profilesCommand, sessionsCommand } from "./commands/people.js";
 import { setupCommand } from "./commands/setup.js";
 import { trackCommand } from "./commands/track.js";
 import { VERSION } from "./version.js";
@@ -32,12 +41,21 @@ export const TOP_HELP = `${encode({
     "(none)": "dashboard — live visitors, this week's metrics, top pages and sources",
     metrics: "visitors, sessions, pageviews, bounce rate, session duration",
     live: "visitors active right now",
-    pages: "top pages by sessions",
+    pages: "list, entry, exit, performance",
     top: "top values for one dimension (referrer, country, device, utm_*, ...)",
-    events: "raw events, newest first, with the total matching count",
-    projects: "list projects and their ids (root client only)",
-    clients: "list, create, delete API clients (root client only)",
-    track: "event, identify — write to a project (write client)",
+    events: "list, names, properties, values",
+    funnel: "conversion between 2-10 events, with the biggest drop-off",
+    flow: "where visitors go before, after, or between events",
+    retention: "week-over-week retention, or `retention cohort`",
+    engagement: "how engaged visitors are",
+    "active-users": "rolling DAU / WAU / MAU",
+    profiles: "list, get, sessions, metrics",
+    sessions: "sessions with duration, entry/exit, bounce",
+    gsc: "Google Search Console: overview, pages, queries, opportunities",
+    projects: "list, create, update (root client)",
+    clients: "list, create, delete API clients (root client)",
+    references: "list, create, update timeline markers (root client)",
+    track: "event, identify, increment, alias, group (write client)",
     setup: "hooks, status, uninstall",
   },
   globals: { "--project": "Target project id (or OPENPANEL_PROJECT_ID)" },
@@ -50,6 +68,8 @@ export const TOP_HELP = `${encode({
     `${BIN} pages --limit 25`,
     `${BIN} top referrer_name`,
     `${BIN} events --event signup`,
+    `${BIN} funnel screen_view signup`,
+    `${BIN} gsc opportunities`,
   ],
   help: [`Run \`${BIN} <command> --help\` for a command reference`],
 })}\n`;
@@ -148,8 +168,17 @@ export async function main() {
       pages: pagesCommand,
       top: topCommand,
       events: eventsCommand,
+      funnel: funnelCommand,
+      flow: flowCommand,
+      retention: retentionCommand,
+      engagement: engagementCommand,
+      "active-users": activeUsersCommand,
+      profiles: profilesCommand,
+      sessions: sessionsCommand,
+      gsc: gscCommand,
       projects: projectsCommand,
       clients: clientsCommand,
+      references: referencesCommand,
       track: trackCommand,
       setup: setupCommand,
     },

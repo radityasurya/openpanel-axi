@@ -115,6 +115,11 @@ export function resolveRange(value, fallback = "7d") {
   return value;
 }
 
+// Routes that only exist from OpenPanel 2.3 onward, so a 404 on one of them is
+// a version gap rather than a wrong URL.
+const MODERN =
+  /\/(overview|active_users|retention|engagement|funnel|user_flow|profiles|sessions|gsc|events\/(names|properties|property_values)|pages\/(top|entry_exit|performance)|traffic)/;
+
 function apiError(status, payload, path) {
   const message = payload?.message || payload?.error || `OpenPanel request failed (HTTP ${status})`;
 
@@ -144,7 +149,19 @@ function apiError(status, payload, path) {
   if (status === 404) {
     return new AxiError(message, "NOT_FOUND", [
       `${path} is not served by this OpenPanel instance`,
+      ...(MODERN.test(path)
+        ? ["This route needs OpenPanel 2.3 or newer; self-hosted instances often lag"]
+        : []),
       "Check OPENPANEL_API_URL points at the API (self-hosted instances serve it under /api)",
+    ]);
+  }
+  // Verified against a live instance: with no GSC connection the gsc routes
+  // raise rather than returning an empty result, so a 500 there is far more
+  // likely to be a missing integration than a broken server.
+  if (status >= 500 && path.includes("/gsc/")) {
+    return new AxiError("Google Search Console did not answer for this project", "API_ERROR", [
+      "GSC is probably not connected — connect it in the dashboard under project settings",
+      "Connecting is a Google OAuth flow; it cannot be done from this CLI",
     ]);
   }
   if (status === 429) {
@@ -172,9 +189,15 @@ export async function op(path, options = {}) {
   const { clientId, clientSecret } = credentials(env, { write });
   const url = new URL(baseUrl(env) + path);
   for (const [key, value] of Object.entries(query ?? {})) {
-    if (value !== undefined && value !== null && value !== "") {
-      url.searchParams.set(key, String(value));
+    if (value === undefined || value === null || value === "") continue;
+    // Repeated parameters, never a comma-joined string. `?event=a,b` is read as
+    // one event literally named "a,b" and comes back 0 rows — an empty result
+    // that looks like an answer. Verified against a live instance.
+    if (Array.isArray(value)) {
+      for (const entry of value) url.searchParams.append(key, String(entry));
+      continue;
     }
+    url.searchParams.set(key, String(value));
   }
 
   let response;
@@ -200,9 +223,13 @@ export async function op(path, options = {}) {
   try {
     payload = await response.json();
   } catch {
+    // A failing status with a non-JSON body is still that failure — the GSC
+    // routes answer a missing integration with a plain-text 500, and parsing
+    // it first would report "non-JSON response" instead of the actual cause.
+    if (!response.ok) throw apiError(response.status, undefined, path);
     // `/track` answers with a bare 200 and no body; every other route is JSON,
     // so an unparseable body there means the URL points somewhere else.
-    if (response.ok && allowEmpty) return {};
+    if (allowEmpty) return {};
     throw new AxiError(
       `OpenPanel returned a non-JSON response (HTTP ${response.status})`,
       "API_ERROR",

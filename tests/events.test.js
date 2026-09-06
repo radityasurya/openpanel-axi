@@ -44,10 +44,13 @@ test("events keeps properties out of the default schema", async () => {
   assert.deepEqual(full.events[0].properties, { plan: "pro" });
 });
 
-test("repeated --event flags are sent as one filter, not the last one", async () => {
+test("repeated --event flags go over as repeated parameters, never comma-joined", async () => {
   const calls = mockOpenPanel({ "/export/events": listing([EVENT], 1) });
   await eventsCommand(["--event", "signup", "--event", "purchase"]);
-  assert.equal(calls[0].query.event, "signup,purchase");
+  // `?event=signup,purchase` matches an event literally named "signup,purchase"
+  // and returns 0 rows — an empty result that reads as a real answer.
+  assert.deepEqual(calls[0].queryAll.event, ["signup", "purchase"]);
+  assert.notEqual(calls[0].query.event, "signup,purchase");
 });
 
 test("no matching events is a definitive answer", async () => {

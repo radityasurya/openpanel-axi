@@ -1,13 +1,13 @@
 import { AxiError } from "axi-sdk-js";
-import { op, resolveProject } from "../api.js";
-import { BIN, helpFor, parse, positiveInt, wantsHelp } from "../args.js";
+import { insights, op, resolveProject } from "../api.js";
+import { BIN, helpFor, makeDispatcher, parse, positiveInt, required, wantsHelp } from "../args.js";
 
 const DEFAULT_LIMIT = 20;
 // The API clamps `limit` to 1000 silently, which would return a page that looks
 // like the whole answer. Refuse the request instead and name the paging flag.
 const MAX_LIMIT = 1000;
 
-const HELP = helpFor({
+const LIST_HELP = helpFor({
   command: "events",
   description: "Raw events, newest first, with the total matching count",
   usage: `${BIN} events [--event <name>] [--limit <n>] [--page <n>] [--start <date>] [--end <date>] [--profile <id>] [--properties]`,
@@ -44,8 +44,8 @@ function row(event, properties) {
   };
 }
 
-export async function eventsCommand(argv) {
-  if (wantsHelp(argv)) return HELP;
+async function list(argv) {
+  if (wantsHelp(argv)) return LIST_HELP;
   const { values } = parse(argv, {
     command: "events",
     flags: {
@@ -77,9 +77,9 @@ export async function eventsCommand(argv) {
       end: values.end,
       profileId: values.profile,
       includes: INCLUDES,
-      // The API accepts `event` repeated; URLSearchParams.set would drop all
-      // but the last, so a multi-name filter goes over as a comma list.
-      event: values.event?.join(","),
+      // Passed as an array so `op` repeats the parameter. A comma-joined value
+      // matches an event named "a,b" and returns 0 rows.
+      event: values.event,
     },
   });
   const data = payload?.data ?? [];
@@ -107,3 +107,93 @@ export async function eventsCommand(argv) {
     ],
   };
 }
+
+
+const HELP = {
+  names: helpFor({
+    command: "events names",
+    description: "Every distinct event name in the project — start here when you do not know them",
+    usage: `${BIN} events names`,
+    examples: [`${BIN} events names`],
+  }),
+  properties: helpFor({
+    command: "events properties",
+    description: "Property keys recorded for an event, or across all events",
+    usage: `${BIN} events properties [<event>]`,
+    examples: [`${BIN} events properties`, `${BIN} events properties screen_view`],
+  }),
+  values: helpFor({
+    command: "events values",
+    description: "The distinct values a property takes",
+    usage: `${BIN} events values <event> <property>`,
+    examples: [`${BIN} events values screen_view path`],
+  }),
+};
+
+async function names(argv) {
+  if (wantsHelp(argv)) return HELP.names;
+  const { values } = parse(argv, { command: "events names" });
+  const rows = await insights(resolveProject(values.project), "/events/names", {});
+  const found = Array.isArray(rows) ? rows : [];
+  if (found.length === 0) {
+    return { events: "0 event names recorded in this project" };
+  }
+  return {
+    count: `${found.length} total`,
+    // The endpoint returns bare strings, not records.
+    events: found.map((name) => (typeof name === "string" ? name : (name?.name ?? String(name)))),
+    help: [
+      `Run \`${BIN} events --event <name>\` for the raw events`,
+      `Run \`${BIN} events properties <name>\` for what each one records`,
+    ],
+  };
+}
+
+async function properties(argv) {
+  if (wantsHelp(argv)) return HELP.properties;
+  const { values, positionals } = parse(argv, { command: "events properties" });
+  const payload = await insights(resolveProject(values.project), "/events/properties", {
+    // The querystring key is `eventName`, not `event` as on /export/events.
+    query: { eventName: positionals[0] },
+  });
+  const columns = payload?.columns ?? (Array.isArray(payload) ? payload : []);
+  const properties_ = payload?.properties ?? [];
+  if (columns.length === 0 && properties_.length === 0) {
+    return { properties: `0 properties recorded${positionals[0] ? ` for ${positionals[0]}` : ""}` };
+  }
+  return {
+    ...(positionals[0] ? { event: positionals[0] } : {}),
+    ...(columns.length ? { columns } : {}),
+    ...(properties_.length ? { properties: properties_ } : {}),
+    help: [`Run \`${BIN} events values <event> <property>\` for the values one of them takes`],
+  };
+}
+
+async function propertyValues(argv) {
+  if (wantsHelp(argv)) return HELP.values;
+  const { values, positionals } = parse(argv, { command: "events values" });
+  const event = required(positionals[0], "<event>", "events values", `${BIN} events values screen_view path`);
+  const property = required(positionals[1], "<property>", "events values", `${BIN} events values ${event} path`);
+  const payload = await insights(resolveProject(values.project), "/events/property_values", {
+    query: { eventName: event, propertyKey: property },
+  });
+  const found = payload?.values ?? (Array.isArray(payload) ? payload : []);
+  if (found.length === 0) {
+    return { event, property, values: `0 values recorded for ${property}` };
+  }
+  return { event, property, count: `${found.length} total`, values: found };
+}
+
+export const eventsCommand = makeDispatcher(
+  "events",
+  { list, names, properties, values: propertyValues },
+  {
+    fallback: "list",
+    summary: {
+      list: "Raw events, newest first (default)",
+      names: "Every distinct event name",
+      properties: "Property keys for an event",
+      values: "Distinct values a property takes",
+    },
+  },
+);

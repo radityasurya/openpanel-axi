@@ -114,16 +114,39 @@ openpanel-axi top browser
 
 openpanel-axi events                       # raw events, newest first
 openpanel-axi events --event signup --properties
-openpanel-axi events --profile <id> --limit 50
+openpanel-axi events names                 # which event names exist
+openpanel-axi events properties screen_view
+openpanel-axi events values screen_view path
+
+openpanel-axi funnel view_pricing checkout purchase --window-hours 72
+openpanel-axi flow screen_view --mode after
+openpanel-axi retention                    # or `retention cohort`
+openpanel-axi engagement
+openpanel-axi active-users --days 30       # rolling MAU
+
+openpanel-axi pages entry                  # where sessions start
+openpanel-axi pages performance --sort bounce_rate
+openpanel-axi sessions --country NL --device mobile
+openpanel-axi profiles --performed signup --min-sessions 3
+openpanel-axi profiles get <id>
+
+openpanel-axi gsc opportunities            # SEO wins (needs GSC connected)
+openpanel-axi gsc queries --range 30d
 
 openpanel-axi projects                     # project ids (root client)
 openpanel-axi clients list                 # API clients and their types
 openpanel-axi clients create --name "agent reads" --type read --project <id>
 openpanel-axi clients delete <id>
+openpanel-axi projects create --name "My Blog" --domain https://blog.example.com
+openpanel-axi projects update myblog --domain https://new.example.com
+openpanel-axi references create --title "v2 launch" --at 2026-09-06T12:00:00Z
 
 openpanel-axi track event deploy_finished --property service=api --property duration=42
 openpanel-axi track event signup --profile user_123
 openpanel-axi track identify user_123 --email a@b.com --first-name Ada
+openpanel-axi track increment user_123 credits --by 10
+openpanel-axi track group acme --type company --name "Acme Inc"
+openpanel-axi track assign-group user_123 acme
 
 openpanel-axi update --check               # newer release available?
 ```
@@ -135,12 +158,21 @@ openpanel-axi update --check               # newer release available?
 | *(none)* | Dashboard: live visitors, 7d metrics, top pages and sources |
 | `metrics` | Visitors, sessions, pageviews, bounce rate, session duration |
 | `live` | Visitors active right now |
-| `pages` | Top pages by sessions |
+| `pages` | `list`, `entry`, `exit`, `performance` |
 | `top <dimension>` | Top values for one dimension |
-| `events` | Raw events with the total matching count |
-| `projects` | Project ids and event counts (root client) |
+| `events` | `list`, `names`, `properties`, `values` |
+| `funnel` | Conversion between 2-10 events, biggest drop-off flagged |
+| `flow` | Where visitors go before, after, or between events |
+| `retention` | Week-over-week series, or `retention cohort` |
+| `engagement` | Engagement summary and distribution |
+| `active-users` | Rolling DAU / WAU / MAU |
+| `sessions` | Sessions with duration, entry/exit, bounce |
+| `profiles` | `list`, `get`, `sessions`, `metrics` |
+| `gsc` | `overview`, `pages`, `queries`, `page`, `query`, `opportunities`, `cannibalization` |
+| `projects` | `list`, `create`, `update` (no delete, on purpose) |
+| `references` | `list`, `create`, `update` timeline markers |
 | `clients` | `list`, `create`, `delete` API clients (root client) |
-| `track` | `event`, `identify` — write to a project (write client) |
+| `track` | `event`, `identify`, `increment`, `decrement`, `alias`, `group`, `assign-group` |
 | `setup` | Agent session integration: `hooks`, `status`, `uninstall` |
 
 Every command takes `--help` for a concise reference with its flags and examples.
@@ -182,8 +214,13 @@ Flags must come **after** the command (`openpanel-axi pages --limit 25`, not
   that shows the rest.
 - **Zero is stated.** An empty window says `0 sessions recorded in this window`, so an agent
   does not re-run with different flags to check.
-- **Works on lagging self-hosted instances.** Only routes present in both the current and
-  older API generations are used.
+- **Works on lagging self-hosted instances.** The core reads (`metrics`, `pages`, `top`,
+  `events`, `live`) use routes present in every API generation. The 2.3-only commands
+  (`funnel`, `flow`, `retention`, `profiles`, `sessions`, `gsc`, …) say so explicitly when an
+  instance is too old, instead of failing obscurely.
+- **Repeated filters go over as repeated parameters.** `--event a --event b` sends
+  `event=a&event=b`; comma-joining them matches an event literally named `a,b` and returns
+  zero rows.
 - **Fails loud.** Unknown flags, ranges, and dimensions exit 2 and name the valid values
   inline, so the agent corrects in one turn instead of calling `--help`.
 - **TOON output** on stdout, structured errors on stdout too, diagnostics on stderr.

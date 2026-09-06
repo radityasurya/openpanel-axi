@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { clientsCommand } from "../src/commands/manage.js";
+import { clientsCommand, projectsCommand, referencesCommand } from "../src/commands/manage.js";
 import { trackCommand } from "../src/commands/track.js";
-import { fails, mockOpenPanel, withClient } from "./helpers.js";
+import { PROJECT, fails, mockOpenPanel, withClient } from "./helpers.js";
 
 test.beforeEach(() => {
   withClient();
@@ -141,4 +141,74 @@ test("clients list filters by project and never shows a secret", async () => {
   const output = await clientsCommand(["list", "--project", "p1"]);
   assert.equal(calls[0].query.projectId, "p1");
   assert.ok(!JSON.stringify(output).includes("secret:"));
+});
+
+test("track increment sends the profile, property, and step", async () => {
+  let sent;
+  globalThis.fetch = async (url, init) => {
+    sent = JSON.parse(init.body);
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+  const output = await trackCommand(["increment", "user_1", "credits", "--by", "10"]);
+  assert.equal(sent.type, "increment");
+  assert.deepEqual(sent.payload, { profileId: "user_1", property: "credits", value: 10 });
+  assert.match(output.note, /accumulates/);
+});
+
+test("track group upserts and assign-group warns that events are not backfilled", async () => {
+  let sent;
+  globalThis.fetch = async (url, init) => {
+    sent = JSON.parse(init.body);
+    return { ok: true, status: 200, json: async () => ({}) };
+  };
+  await trackCommand(["group", "acme", "--type", "company", "--name", "Acme Inc"]);
+  assert.deepEqual(sent.payload, { id: "acme", type: "company", name: "Acme Inc" });
+
+  const output = await trackCommand(["assign-group", "user_1", "acme", "beta"]);
+  assert.deepEqual(sent.payload.groupIds, ["acme", "beta"]);
+  assert.match(output.note, /not added to past or future events/);
+});
+
+test("projects create refuses an unknown type and never sends delete", async () => {
+  const calls = mockOpenPanel({});
+  await assert.rejects(() => projectsCommand(["create", "--name", "x", "--type", "mobile"]), (error) => {
+    assert.match(error.suggestions.join(" "), /website, app, backend/);
+    return true;
+  });
+  assert.equal(calls.length, 0);
+});
+
+test("projects update requires at least one change", async () => {
+  const calls = mockOpenPanel({});
+  await assert.rejects(() => projectsCommand(["update", "myblog"]), (error) => {
+    assert.equal(error.code, "VALIDATION_ERROR");
+    return true;
+  });
+  assert.equal(calls.length, 0);
+});
+
+test("there is no `projects delete` subcommand", async () => {
+  await assert.rejects(() => projectsCommand(["delete", "myblog"]), (error) => {
+    assert.match(error.message, /unknown subcommand/);
+    assert.match(error.suggestions.join(" "), /list, create, update/);
+    return true;
+  });
+});
+
+test("references create needs a title and a time", async () => {
+  const calls = mockOpenPanel({});
+  await assert.rejects(() => referencesCommand(["create", "--title", "launch"]), (error) => {
+    assert.equal(error.code, "VALIDATION_ERROR");
+    return true;
+  });
+  assert.equal(calls.length, 0);
+
+  let sent;
+  globalThis.fetch = async (url, init) => {
+    sent = JSON.parse(init.body);
+    return { ok: true, status: 200, json: async () => ({ data: { id: "r1", title: "launch" } }) };
+  };
+  await referencesCommand(["create", "--title", "launch", "--at", "2026-09-06T12:00:00Z"]);
+  assert.equal(sent.projectId, PROJECT, "a reference is filed against the resolved project");
+  assert.equal(sent.datetime, "2026-09-06T12:00:00Z");
 });

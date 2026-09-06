@@ -199,3 +199,55 @@ session average is not information, it is tokens. The rounding lives in `api.js`
 **two** call sites render that payload — the `metrics` command and the no-args dashboard —
 and the first fix only patched the command, leaving the dashboard printing raw floats.
 Anything that formats a metric belongs there, not in a caller.
+
+## Array query values must repeat, never comma-join (`src/api.js#op`)
+
+`URLSearchParams.set` with an array stringifies it to `a,b`. Both `/export/events?event=` and
+`/insights/:id/funnel?steps=` take repeated parameters, and a comma-joined value is read as
+**one** value literally named `a,b`:
+
+```
+?event=screen_view&event=link_out  -> 222 events
+?event=screen_view,link_out        -> 0 events, HTTP 200
+```
+
+Zero rows with a success status is the worst failure this tool can produce, and it shipped
+in 0.1.0 behind a test that asserted the comma behaviour. `op` now appends array values, and
+`tests/helpers.js` records `queryAll` so a test can assert the repetition rather than the
+collapsed last value.
+
+## The two APIs disagree on the event-name parameter
+
+`/export/events` takes `event`; `/insights/:id/events/properties` and `property_values` take
+`eventName` and `propertyKey`. Same concept, different spellings, same tool. Check the route
+before adding a filter — a wrong key is silently ignored and the result looks unfiltered.
+
+## A failing status can carry a non-JSON body (`src/api.js#op`)
+
+The `/gsc/*` routes answer a missing Search Console connection with a **plain-text**
+`500 Internal server error`. Parsing the body before checking the status reported "OpenPanel
+returned a non-JSON response", which sends the reader after `OPENPANEL_API_URL` instead of
+the missing integration. Status first, then parse: a non-JSON body on a failing response is
+still that failure.
+
+## Version gating is a message, not a feature flag (`src/api.js#MODERN`)
+
+Funnels, flow, retention, engagement, profiles, sessions, page performance, and GSC exist
+only from 2.3. Rather than probing the version, a 404 on one of those paths appends "this
+route needs OpenPanel 2.3 or newer" to the existing NOT_FOUND. The core reads stay on the
+legacy routes so they keep working on an older instance — see the rule above about which
+generation to target.
+
+## `assign_group` does not backfill events
+
+Linking a profile to a group affects nothing that was already recorded, and nothing recorded
+later either: `track event` must carry `--group` explicitly. The command says so in its
+output, because the natural assumption is the opposite.
+
+## Verified against a live 2.3 instance (2026-09-06)
+
+Every read command in this CLI has been run against a real self-hosted OpenPanel with real
+traffic, and the response shapes here were captured from that instance rather than inferred
+from the service code. The write path was verified with a `clients create` → `clients delete`
+round-trip, which exercises POST and DELETE without writing anything into the analytics data
+the tool exists to interpret. Do not verify `track` against a project whose numbers matter.

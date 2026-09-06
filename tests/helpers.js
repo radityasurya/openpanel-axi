@@ -12,7 +12,11 @@ export function mockOpenPanel(routes) {
     const parsed = new URL(url);
     const path = parsed.pathname.replace("/api", "");
     const query = Object.fromEntries(parsed.searchParams);
-    calls.push({ path, query, headers: init.headers });
+    // Repeated parameters collapse in `query`; keep the full lists too.
+    const queryAll = Object.fromEntries(
+      [...new Set([...parsed.searchParams.keys()])].map((key) => [key, parsed.searchParams.getAll(key)]),
+    );
+    calls.push({ path, query, queryAll, method: init.method ?? "GET", headers: init.headers });
 
     const route = routes[path];
     if (route === undefined) {

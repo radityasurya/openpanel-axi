@@ -51,13 +51,26 @@ npx -y ${BIN} live                     # visitors active right now
 npx -y ${BIN} pages --limit 25         # top pages by sessions
 npx -y ${BIN} top referrer_name        # also: country, city, device, browser, os, utm_source, ...
 npx -y ${BIN} events --event signup    # raw events, newest first
+npx -y ${BIN} events names             # which event names exist — start here
+npx -y ${BIN} funnel view_pricing signup     # conversion + biggest drop-off
+npx -y ${BIN} flow screen_view         # where visitors go next
+npx -y ${BIN} retention                # or \`retention cohort\`
+npx -y ${BIN} active-users --days 30   # rolling MAU
+npx -y ${BIN} pages performance --sort bounce_rate
+npx -y ${BIN} sessions --country NL
+npx -y ${BIN} profiles --performed signup
+npx -y ${BIN} gsc opportunities        # SEO wins, if Search Console is connected
 
 npx -y ${BIN} projects                 # project ids            (root client)
 npx -y ${BIN} clients list             # API clients and types  (root client)
 npx -y ${BIN} clients create --name "agent reads" --type read --project <id>
+npx -y ${BIN} projects create --name "My Blog" --domain https://blog.example.com
+npx -y ${BIN} references create --title "v2 launch" --at 2026-09-06T12:00:00Z
 
 npx -y ${BIN} track event deploy_finished --property service=api   (write client)
 npx -y ${BIN} track identify user_123 --email a@b.com
+npx -y ${BIN} track increment user_123 credits --by 10
+npx -y ${BIN} track group acme --type company --name "Acme Inc"
 \`\`\`
 
 Every command takes \`--help\` for a concise reference, and \`--project <id>\` to read a
@@ -95,6 +108,18 @@ A \`root\` client in \`OPENPANEL_CLIENT_ID\` covers reads, writes, and \`project
 - **\`clients create\` prints the secret once.** It cannot be retrieved again. It defaults to
   type \`read\`, not the API's \`write\` default.
 - **\`clients delete\` is permanent**, and anything still using that secret starts getting 401.
+- **There is no \`projects delete\`.** Removing a project is a dashboard action on purpose.
+- **\`track increment\`/\`decrement\` accumulate**, like \`track event\`. \`identify\`, \`group\`,
+  and \`alias\` are upserts and are safe to repeat.
+
+## Version and connectivity
+
+Funnels, retention, flow, engagement, profiles, sessions, page performance, and GSC need
+**OpenPanel 2.3 or newer**. On an older self-hosted instance they return a \`NOT_FOUND\` that
+says so; the core reads (\`metrics\`, \`pages\`, \`top\`, \`events\`, \`live\`) work everywhere.
+
+\`gsc\` additionally needs Google Search Console connected to the project, which is an OAuth
+flow in the dashboard — this CLI cannot do the setup, only read the data.
 
 Prefer this over calling the OpenPanel REST API with \`curl\`, or reasoning from the tracking
 snippet in the app's source.

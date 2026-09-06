@@ -10,7 +10,7 @@ import {
   metricValue,
   resolveProject,
 } from "../api.js";
-import { BIN, helpFor, parse, positiveInt, required, wantsHelp } from "../args.js";
+import { BIN, helpFor, makeDispatcher, parse, positiveInt, required, wantsHelp } from "../args.js";
 
 const DEFAULT_LIMIT = 10;
 
@@ -126,7 +126,7 @@ export async function liveCommand(argv) {
     : { live: `${visitors} visitors active right now` };
 }
 
-export async function pagesCommand(argv) {
+async function pagesList(argv) {
   if (wantsHelp(argv)) return HELP.pages;
   const { values } = parse(argv, {
     command: "pages",
@@ -224,3 +224,107 @@ export async function topCommand(argv) {
     ],
   };
 }
+
+
+const PAGE_HELP = {
+  entry: helpFor({
+    command: "pages entry|exit",
+    description: "Where sessions start, or where they end",
+    usage: `${BIN} pages entry|exit [--range <window>] [--limit <n>]`,
+    flags: { ...dateFlagHelp(), "--limit": `Rows to show (default ${DEFAULT_LIMIT})` },
+    examples: [`${BIN} pages entry`, `${BIN} pages exit --range 30d`],
+  }),
+  performance: helpFor({
+    command: "pages performance",
+    description: "Per-page bounce rate, average duration, sessions, and pageviews",
+    usage: `${BIN} pages performance [--range <window>] [--limit <n>] [--sort sessions|pageviews|bounce_rate|avg_duration]`,
+    flags: {
+      ...dateFlagHelp(),
+      "--limit": "Rows to show, max 500 (default 50)",
+      "--sort": "Order by this column",
+      "--search": "Only paths matching this text",
+    },
+    examples: [`${BIN} pages performance --sort bounce_rate`],
+  }),
+};
+
+/** entry and exit are one endpoint with a mode; the shapes are identical. */
+function entryExit(mode) {
+  return async function run(argv) {
+    if (wantsHelp(argv)) return PAGE_HELP.entry;
+    const { values } = parse(argv, {
+      command: `pages ${mode}`,
+      flags: { ...DATE_FLAGS, limit: { type: "string" } },
+    });
+    const limit = positiveInt(values.limit, "--limit", DEFAULT_LIMIT);
+    const query = dateWindow(values);
+    const rows = await insights(resolveProject(values.project), "/pages/entry_exit", {
+      query: { ...query, mode },
+    });
+    const all = Array.isArray(rows) ? rows : [];
+    if (all.length === 0) {
+      return { window: query.range, [`${mode}_pages`]: `0 ${mode} pages in this window` };
+    }
+    const shown = all.slice(0, limit);
+    return {
+      window: query.range,
+      count: `${shown.length} of ${all.length} total`,
+      [`${mode}_pages`]: shown.map((row) => ({
+        path: label(row.path),
+        sessions: row.sessions,
+        pageviews: row.pageviews,
+      })),
+    };
+  };
+}
+
+async function performance(argv) {
+  if (wantsHelp(argv)) return PAGE_HELP.performance;
+  const { values } = parse(argv, {
+    command: "pages performance",
+    flags: { ...DATE_FLAGS, limit: { type: "string" }, sort: { type: "string" }, search: { type: "string" } },
+  });
+  const limit = positiveInt(values.limit, "--limit", 50);
+  if (limit > 500) {
+    throw new AxiError("--limit is capped at 500", "VALIDATION_ERROR", ["Pass a value between 1 and 500"]);
+  }
+  const sorts = ["sessions", "pageviews", "bounce_rate", "avg_duration"];
+  if (values.sort && !sorts.includes(values.sort)) {
+    throw new AxiError(`unknown --sort ${values.sort}`, "VALIDATION_ERROR", [
+      `valid columns: ${sorts.join(", ")}`,
+    ]);
+  }
+  const query = dateWindow(values);
+  const payload = await insights(resolveProject(values.project), "/pages/performance", {
+    query: { ...query, limit, sortBy: values.sort, search: values.search },
+  });
+  const pages = payload?.pages ?? [];
+  if (pages.length === 0) {
+    return { window: query.range, pages: "0 pages with performance data in this window" };
+  }
+  return {
+    window: query.range,
+    count: `${payload.shown ?? pages.length} of ${payload.total_pages ?? pages.length} total`,
+    pages: pages.map((page) => ({
+      path: label(page.path),
+      sessions: page.sessions,
+      pageviews: page.pageviews,
+      bounce_rate: metricValue("bounce_rate", page.bounce_rate),
+      avg_duration: metricValue("avg_session_duration", page.avg_duration),
+    })),
+  };
+}
+
+export const pagesCommand = makeDispatcher(
+  "pages",
+  { list: pagesList, entry: entryExit("entry"), exit: entryExit("exit"), performance },
+  {
+    fallback: "list",
+    summary: {
+      list: "Top pages by sessions (default)",
+      entry: "Where sessions start",
+      exit: "Where sessions end",
+      performance: "Per-page bounce rate and duration",
+    },
+  },
+);

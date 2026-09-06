@@ -46,23 +46,22 @@ every time: re-running it does not verify anything, it records a second event.
 
 ## What it deliberately does not do
 
-- **No project creation or deletion.** Adding and removing projects is rare, consequential,
-  and needs a human at the dashboard. `projects` reads the list.
-- **No `increment`/`decrement`/`group` tracking.** They exist in the Track API and would be
-  a few lines each; nobody has needed them from a CLI yet.
-- **No references.** The Manage API's timeline annotations are a dashboard feature.
+- **No project deletion.** Creating and editing a project is safe and reversible; deleting
+  one soft-deletes it with a 24-hour grace period, and an agent should not hold that trigger.
+  `clients delete` is the exception — a leaked secret needs revoking, and that is the command
+  that does it.
+- **No session replay upload.** The Track API accepts recording chunks; a CLI is the wrong
+  shape for that.
+- **No GSC setup.** Connecting Google Search Console is a Google OAuth flow. The CLI reads
+  GSC data once a human has connected it, and says so when nothing is connected.
 - **No credential minting from nothing.** `clients create` needs a `root` client you already
   have. This tool never logs in, refreshes, or writes a credential to disk.
 - **No interactive anything.** Every operation completes from flags alone.
 
 ## Where it could go
 
-- **Funnels and retention** — `/funnel` and `/retention` are pre-computed aggregates in the
-  AXI sense and would need no client-side math. They exist from 2.3 onward, so adding them
-  means either requiring that version or degrading gracefully on older instances.
-- **`sessions` and `profiles`**, which answer "who" rather than "how many", and are the
-  natural detail view under an event.
 - **A `compare` window**, since the metrics payload already supports a previous period —
   "sessions are down 20% week over week" is one call and the question actually being asked.
-- **Google Search Console rollups**, if the instance has GSC connected: search queries and
-  positions sit next to the traffic they explain.
+- **Saved reports and dashboards**, which the MCP server can execute and this cannot.
+- **`--fields` on the wide nouns** (`sessions` carries 38 columns, `profiles` 11), so an
+  agent can ask for a column the default projection drops.
