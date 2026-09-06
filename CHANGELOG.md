@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.2](https://github.com/radityasurya/openpanel-axi/compare/v0.1.1...v0.1.2) (2026-09-06)
+
+
+### Bug Fixes
+
+* make the gsc commands work against a real Search Console connection ([faa689d](https://github.com/radityasurya/openpanel-axi/commit/faa689d7f7017fd4d8d90fde6e3b6df1c786735a))
+* project the gsc detail views and guard the version fast path ([77bde20](https://github.com/radityasurya/openpanel-axi/commit/77bde203773672cf74949db2a83ba0837b330813))
+
 ## [0.1.1](https://github.com/radityasurya/openpanel-axi/compare/v0.1.0...v0.1.1) (2026-09-06)
 
 

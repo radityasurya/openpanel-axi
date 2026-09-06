@@ -1,6 +1,6 @@
 {
   "name": "openpanel-axi",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "AXI-compliant OpenPanel analytics CLI — visitors, pages, sources, and raw events with token-efficient TOON output",
   "keywords": [
     "axi",
