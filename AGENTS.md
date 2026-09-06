@@ -244,6 +244,37 @@ Linking a profile to a group affects nothing that was already recorded, and noth
 later either: `track event` must carry `--group` explicitly. The command says so in its
 output, because the natural assumption is the opposite.
 
+## `range=` is unusable on the gsc routes (`src/commands/gsc.js`)
+
+The GSC ClickHouse table stores `date` as a **`Date`**, but `resolveDates()` hands the query a
+full datetime derived from `range=`, and ClickHouse refuses the comparison:
+
+```
+Cannot convert string '2026-08-07 00:00:00' to type Date:
+  while executing greaterOrEquals on __table1.date Date, '2026-08-07 00:00:00'_String
+```
+
+Every `/insights/:projectId/gsc/*` route 500s for any named range. Passing explicit date-only
+`startDate`/`endDate` skips the derivation and works. This is an upstream bug — the dashboard
+is unaffected because it reaches GSC over tRPC, which takes a different path — so `gsc`
+commands compute their own date-only bounds and never forward `range`.
+
+Their window also ends `LAG_DAYS` back, for the same reason `gsc-axi` does: Search Console
+finalises on a 2-3 day delay and a window ending today shows a decline that is not real.
+
+## `/gsc/overview` wraps its rows in `data`
+
+Every other gsc route returns a bare array. `overview` returns `{ summary, data }`, and its
+summary uses different field names again (`total_clicks`, `avg_ctr` as a **percentage**, while
+per-row `ctr` is a **fraction**). Three shapes in one route group; check before projecting.
+
+## A 500 on gsc is not proof of a missing connection
+
+The original translation said "GSC is probably not connected", which was right until GSC was
+connected and the date bug produced the same 500. The error text stays useful, but the empty
+*result* help no longer suggests connecting — a project with no connection raises, so an empty
+list means an empty window.
+
 ## Verified against a live 2.3 instance (2026-09-06)
 
 Every read command in this CLI has been run against a real self-hosted OpenPanel with real

@@ -160,3 +160,25 @@ test("a plain-text 500 from gsc reports the missing integration, not a parse err
     return true;
   });
 });
+
+test("gsc sends date-only bounds and never a range", async () => {
+  const calls = mockOpenPanel({ [`/insights/${PROJECT}/gsc/queries`]: [{ query: "a", clicks: 1, impressions: 9, ctr: 0.111, position: 18.555 }] });
+  const output = await gscCommand(["queries", "--range", "30d"]);
+
+  // `range=` makes the server derive '2026-08-07 00:00:00', which ClickHouse
+  // refuses to compare against the GSC table's Date column — a hard 500.
+  assert.equal(calls[0].query.range, undefined, "forwarding range to a gsc route 500s upstream");
+  assert.match(calls[0].query.startDate, /^\d{4}-\d{2}-\d{2}$/);
+  assert.match(calls[0].query.endDate, /^\d{4}-\d{2}-\d{2}$/);
+  assert.equal(output.queries[0].ctr, "11.1%", "ctr arrives as a fraction");
+  assert.equal(output.queries[0].position, 18.6);
+});
+
+test("gsc rejects a range it cannot convert to dates", async () => {
+  const calls = mockOpenPanel({});
+  await assert.rejects(() => gscCommand(["queries", "--range", "monthToDate"]), (error) => {
+    assert.equal(error.code, "VALIDATION_ERROR");
+    return true;
+  });
+  assert.equal(calls.length, 0);
+});

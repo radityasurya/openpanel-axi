@@ -1,7 +1,56 @@
-import { DATE_FLAGS, dateFlagHelp, dateWindow, insights, metricValue, resolveProject } from "../api.js";
+import { AxiError } from "axi-sdk-js";
+import { DATE_FLAGS, insights, resolveProject } from "../api.js";
 import { BIN, helpFor, makeDispatcher, parse, positiveInt, required, wantsHelp } from "../args.js";
 
 const DEFAULT_LIMIT = 20;
+
+// The GSC ClickHouse table stores `date` as a `Date`, but the server derives a
+// full datetime from `range=` and ClickHouse refuses to compare the two:
+//   Cannot convert string '2026-08-07 00:00:00' to type Date
+// Sending explicit date-only bounds skips that derivation entirely. Verified
+// against a live 2.3 instance — `range=` 500s, `startDate=`/`endDate=` works.
+const GSC_RANGES = { "7d": 7, "28d": 28, "30d": 30, "90d": 90, "3m": 90, "6m": 180, "12m": 365, "16m": 480 };
+
+// Search Console finalises data on a 2-3 day delay, so a window ending today
+// always shows the last rows near zero — a decline that is not real.
+const LAG_DAYS = 2;
+
+function day(offset) {
+  const date = new Date();
+  date.setUTCDate(date.getUTCDate() - offset);
+  return date.toISOString().slice(0, 10);
+}
+
+/** Date-only bounds; `range` is never forwarded to a gsc route. */
+function gscWindow(values = {}) {
+  if (values.start || values.end) {
+    return {
+      startDate: values.start ?? day(GSC_RANGES["28d"] + LAG_DAYS),
+      endDate: values.end ?? day(LAG_DAYS),
+    };
+  }
+  const range = values.range ?? "28d";
+  const days = GSC_RANGES[range];
+  if (days === undefined) {
+    throw new AxiError(`unknown --range ${range} for gsc`, "VALIDATION_ERROR", [
+      `valid ranges: ${Object.keys(GSC_RANGES).join(", ")}`,
+      "Or pass explicit bounds with --start <YYYY-MM-DD> --end <YYYY-MM-DD>",
+    ]);
+  }
+  return { startDate: day(days + LAG_DAYS), endDate: day(LAG_DAYS) };
+}
+
+function gscFlagHelp() {
+  return {
+    "--range": `Named window (default 28d): ${Object.keys(GSC_RANGES).join(", ")}`,
+    "--start": "Window start as YYYY-MM-DD (overrides --range)",
+    "--end": "Window end as YYYY-MM-DD",
+  };
+}
+
+function label(dates) {
+  return `${dates.startDate}..${dates.endDate}`;
+}
 
 const NOT_CONNECTED = [
   "Connect Google Search Console in the dashboard under the project's settings",
@@ -13,21 +62,21 @@ const HELP = {
     command: "gsc overview",
     description: "Search performance over time: clicks, impressions, CTR, average position",
     usage: `${BIN} gsc overview [--range <window>] [--interval day|week|month]`,
-    flags: { ...dateFlagHelp(), "--interval": "Bucket size (default day)" },
+    flags: { ...gscFlagHelp(), "--interval": "Bucket size (default day)" },
     examples: [`${BIN} gsc overview --range 30d`],
   }),
   pages: helpFor({
     command: "gsc pages",
     description: "Top pages in Google search, ranked by clicks",
     usage: `${BIN} gsc pages [--limit <n>] [--range <window>]`,
-    flags: { ...dateFlagHelp(), "--limit": `Rows to show (default ${DEFAULT_LIMIT})` },
+    flags: { ...gscFlagHelp(), "--limit": `Rows to show (default ${DEFAULT_LIMIT})` },
     examples: [`${BIN} gsc pages --range 30d`],
   }),
   queries: helpFor({
     command: "gsc queries",
     description: "Top search queries, ranked by clicks",
     usage: `${BIN} gsc queries [--limit <n>] [--range <window>]`,
-    flags: { ...dateFlagHelp(), "--limit": `Rows to show (default ${DEFAULT_LIMIT})` },
+    flags: { ...gscFlagHelp(), "--limit": `Rows to show (default ${DEFAULT_LIMIT})` },
     examples: [`${BIN} gsc queries`],
   }),
   page: helpFor({
@@ -46,7 +95,7 @@ const HELP = {
     command: "gsc opportunities",
     description: "Queries ranking 4-20 with real volume — the cheapest SEO wins",
     usage: `${BIN} gsc opportunities [--min-impressions <n>] [--range <window>]`,
-    flags: { ...dateFlagHelp(), "--min-impressions": "Volume floor (default 50)" },
+    flags: { ...gscFlagHelp(), "--min-impressions": "Volume floor (default 50)" },
     examples: [`${BIN} gsc opportunities --range 30d`],
   }),
   cannibalization: helpFor({
@@ -61,9 +110,23 @@ const HELP = {
 function searchRow(row) {
   const projected = {};
   for (const [key, value] of Object.entries(row)) {
-    if (["clicks", "impressions", "ctr", "position", "page", "query", "url", "keys"].includes(key)) {
-      projected[key] = typeof value === "number" ? metricValue(key, value) : value;
+    const known = ["date", "clicks", "impressions", "ctr", "position", "page", "query", "url"];
+    const summary = ["total_clicks", "total_impressions", "avg_ctr", "avg_position"];
+    if (!known.includes(key) && !summary.includes(key)) continue;
+    if (key === "avg_ctr") {
+      // Already a percentage in the summary, unlike the per-row fractional ctr.
+      projected.avg_ctr = `${Number(value ?? 0).toFixed(2)}%`;
+      continue;
     }
+    if (key === "avg_position") {
+      projected.avg_position = Number((value ?? 0).toFixed(1));
+      continue;
+    }
+    // ctr arrives as a fraction (0.1111111119389534) and position with full
+    // float noise (18.55555534362793); neither is readable as returned.
+    if (key === "ctr") projected.ctr = `${((value ?? 0) * 100).toFixed(1)}%`;
+    else if (key === "position") projected.position = Number((value ?? 0).toFixed(1));
+    else projected[key] = value;
   }
   return Object.keys(projected).length ? projected : row;
 }
@@ -72,10 +135,9 @@ function empty(what, range) {
   return {
     window: range,
     [what]: `0 ${what} reported by Search Console in this window`,
-    help: [
-      "Search Console data lags by 2-3 days; try a wider --range",
-      ...NOT_CONNECTED,
-    ],
+    // A project with no GSC connection errors rather than returning nothing, so
+    // an empty result here means the window is empty — not that setup is missing.
+    help: ["Search Console data lags by 2-3 days; try a wider --range"],
   };
 }
 
@@ -86,14 +148,14 @@ function listing(name, path, extraFlags = {}, buildQuery = () => ({})) {
       command: `gsc ${name}`,
       flags: { ...DATE_FLAGS, limit: { type: "string" }, ...extraFlags },
     });
-    const query = dateWindow(values);
+    const dates = gscWindow(values);
     const payload = await insights(resolveProject(values.project), path, {
-      query: { ...query, limit: positiveInt(values.limit, "--limit", DEFAULT_LIMIT), ...buildQuery(values) },
+      query: { ...dates, limit: positiveInt(values.limit, "--limit", DEFAULT_LIMIT), ...buildQuery(values) },
     });
-    const rows = Array.isArray(payload) ? payload : (payload?.rows ?? payload?.data ?? []);
-    if (!Array.isArray(rows) || rows.length === 0) return empty(name, query.range);
+    const rows = Array.isArray(payload) ? payload : (payload?.data ?? payload?.rows ?? []);
+    if (!Array.isArray(rows) || rows.length === 0) return empty(name, label(dates));
     return {
-      window: query.range,
+      window: label(dates),
       count: `${rows.length} shown`,
       [name]: rows.map(searchRow),
     };
@@ -106,20 +168,18 @@ async function overview(argv) {
     command: "gsc overview",
     flags: { ...DATE_FLAGS, interval: { type: "string" } },
   });
-  const query = dateWindow(values);
+  const dates = gscWindow(values);
   const payload = await insights(resolveProject(values.project), "/gsc/overview", {
-    query: { ...query, interval: values.interval ?? "day" },
+    query: { ...dates, interval: values.interval ?? "day" },
   });
-  const series = payload?.series ?? (Array.isArray(payload) ? payload : []);
-  if (series.length === 0) return empty("overview", query.range);
+  // `/gsc/overview` wraps its rows in `data`, unlike the other gsc routes.
+  const series = payload?.data ?? payload?.series ?? (Array.isArray(payload) ? payload : []);
+  if (series.length === 0) return empty("overview", label(dates));
   return {
-    window: query.range,
+    window: label(dates),
     ...(payload?.summary ? { summary: searchRow(payload.summary) } : {}),
     count: `${series.length} points`,
-    series: series.map((point) => ({
-      date: String(point.date ?? "").slice(0, 10),
-      ...searchRow(point),
-    })),
+    series: series.map((point) => searchRow(point)),
   };
 }
 
@@ -127,22 +187,22 @@ async function pageDetails(argv) {
   if (wantsHelp(argv)) return HELP.page;
   const { values, positionals } = parse(argv, { command: "gsc page", flags: DATE_FLAGS });
   const page = required(positionals[0], "<url>", "gsc page", `${BIN} gsc page https://example.com/post`);
-  const query = dateWindow(values);
+  const dates = gscWindow(values);
   const payload = await insights(resolveProject(values.project), "/gsc/pages/details", {
-    query: { ...query, page },
+    query: { ...dates, page },
   });
-  return { window: query.range, page, details: payload };
+  return { window: label(dates), page, details: payload };
 }
 
 async function queryDetails(argv) {
   if (wantsHelp(argv)) return HELP.query;
   const { values, positionals } = parse(argv, { command: "gsc query", flags: DATE_FLAGS });
   const text = required(positionals[0], "<text>", "gsc query", `${BIN} gsc query "self hosted analytics"`);
-  const query = dateWindow(values);
+  const dates = gscWindow(values);
   const payload = await insights(resolveProject(values.project), "/gsc/queries/details", {
-    query: { ...query, query: text },
+    query: { ...dates, query: text },
   });
-  return { window: query.range, query: text, details: payload };
+  return { window: label(dates), query: text, details: payload };
 }
 
 export const gscCommand = makeDispatcher(
