@@ -168,3 +168,40 @@ test("an empty referrer is direct traffic, not an unknown source", async () => {
   const countries = await topCommand(["country"]);
   assert.equal(countries.values[0].name, "(none)", "only referrer columns mean direct");
 });
+
+test("a flag glued to its value names the whole token, not just the flag", async () => {
+  const calls = mockOpenPanel({});
+  // An unquoted `$VAR` holding "--project listingg" reaches argv as one entry.
+  await assert.rejects(() => metricsCommand(["--project listingg", "--range", "7d"]), (error) => {
+    assert.equal(error.code, "VALIDATION_ERROR");
+    assert.match(error.message, /--project listingg/);
+    assert.match(error.suggestions.join(" "), /as two arguments/);
+    // The old message said `unknown flag --project` and then listed --project
+    // as valid; the fix must not reproduce that contradiction.
+    assert.doesNotMatch(error.suggestions.join(" "), /valid flags/);
+    return true;
+  });
+  assert.equal(calls.length, 0);
+});
+
+test("a genuinely unknown flag still lists the valid ones", async () => {
+  await assert.rejects(() => metricsCommand(["--bogus"]), (error) => {
+    assert.match(error.message, /--bogus/);
+    assert.match(error.suggestions.join(" "), /valid flags for `metrics`/);
+    return true;
+  });
+});
+
+test("an unknown flag glued to a value is not excused as valid", async () => {
+  await assert.rejects(() => metricsCommand(["--bogus listingg"]), (error) => {
+    assert.match(error.suggestions.join(" "), /valid flags for `metrics`/);
+    return true;
+  });
+});
+
+test("a renamed flag still points at its replacement", async () => {
+  await assert.rejects(() => metricsCommand(["--period", "7d"]), (error) => {
+    assert.match(error.suggestions.join(" "), /--range/);
+    return true;
+  });
+});

@@ -44,15 +44,25 @@ function usageError(error, command, options) {
     .map((name) => `--${name}`)
     .join(", ");
   const raw = String(error.message);
-  const unknown = raw.match(/'?(--?[\w-]+)'?/)?.[1];
+  // The offending token is the first quoted span. Matching `--?[\w-]+` instead
+  // would stop at the first space and report `--project` for `--project x`,
+  // naming a flag that is in the valid list right below it.
+  const unknown = raw.match(/'([^']+)'/)?.[1]?.replace(/ <value>$/, "");
 
   if (error.code === "ERR_PARSE_ARGS_UNKNOWN_OPTION") {
     const bare = unknown?.replace(/^--?/, "");
     const replacement = bare && RENAMED[bare];
-    return new AxiError(`unknown flag ${unknown} for \`${command}\``, "VALIDATION_ERROR", [
-      replacement
-        ? `${unknown} was renamed; use ${replacement} instead`
-        : `valid flags for \`${command}\`: ${valid}`,
+    // A space means the flag and its value arrived as one argv entry (an
+    // unquoted `$VAR` holding both — zsh does not word-split), so the flag
+    // itself is fine and the valid-flags list would read as a contradiction.
+    const [flag, ...rest] = unknown?.includes(" ") ? unknown.split(" ") : [];
+    const flagIsReal = flag && Object.hasOwn(options, flag.replace(/^--?/, ""));
+    return new AxiError(`unknown flag '${unknown}' for \`${command}\``, "VALIDATION_ERROR", [
+      flagIsReal
+        ? `${flag} is valid, but arrived as one argument with its value; pass \`${flag} ${rest.join(" ")}\` as two arguments`
+        : replacement
+          ? `${unknown} was renamed; use ${replacement} instead`
+          : `valid flags for \`${command}\`: ${valid}`,
     ]);
   }
   if (error.code === "ERR_PARSE_ARGS_INVALID_OPTION_VALUE") {
