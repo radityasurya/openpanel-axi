@@ -182,3 +182,42 @@ test("gsc rejects a range it cannot convert to dates", async () => {
   });
   assert.equal(calls.length, 0);
 });
+
+test("gsc detail views summarise the series instead of dumping 91 rows", async () => {
+  const timeseries = Array.from({ length: 91 }, (_, day) => ({
+    date: `2026-06-${String((day % 28) + 1).padStart(2, "0")}`,
+    clicks: day === 0 ? 2 : 0,
+    impressions: day < 4 ? 16 : 0,
+    ctr: 0,
+    position: day < 4 ? 8.8 : 0,
+  }));
+  mockOpenPanel({
+    [`/insights/${PROJECT}/gsc/pages/details`]: {
+      timeseries,
+      queries: [{ query: "a", clicks: 0, impressions: 1, ctr: 0, position: 12 }],
+    },
+  });
+
+  const output = await gscCommand(["page", "https://example.com/about"]);
+  assert.equal(output.totals.clicks, 2);
+  assert.equal(output.totals.impressions, 64);
+  assert.equal(output.totals.ctr, "3.1%");
+  // Zero-position days are days the page never ranked; averaging them in would
+  // report a better position than the page actually held.
+  assert.equal(output.totals.avg_position, 8.8);
+  assert.equal(output.series, "91 daily points not shown", "the series is named with its size, not omitted");
+  assert.match(output.help.join(" "), /--series/);
+});
+
+test("gsc --series opts back into the full breakdown", async () => {
+  mockOpenPanel({
+    [`/insights/${PROJECT}/gsc/queries/details`]: {
+      timeseries: [{ date: "2026-06-01", clicks: 1, impressions: 2, ctr: 0.5, position: 3 }],
+      pages: [],
+    },
+  });
+  const output = await gscCommand(["query", "something", "--series"]);
+  assert.equal(output.series.length, 1);
+  assert.equal(output.series[0].ctr, "50.0%");
+  assert.match(output.pages, /0 pages recorded/);
+});

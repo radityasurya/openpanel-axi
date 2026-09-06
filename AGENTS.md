@@ -275,6 +275,23 @@ connected and the date bug produced the same 500. The error text stays useful, b
 *result* help no longer suggests connecting — a project with no connection raises, so an empty
 list means an empty window.
 
+## Detail routes return a 91-row series nobody asked for (`src/commands/gsc.js`)
+
+`/gsc/pages/details` and `/gsc/queries/details` each answer with `timeseries` (one row per
+day in the window, overwhelmingly zeros) plus the rows that actually answer the question.
+Passing the payload straight through cost 2393 characters for a page with two queries and two
+clicks. `detail()` sums the series into totals, prints the breakdown, and names the series
+with its row count behind `--series` — 354 characters for the same call.
+
+When averaging position, skip days where `position` is 0: those are days the page never
+ranked at all, and counting them drags the average toward a better number than the page held.
+
+## AXI §10's version guard is a ratio, not a millisecond budget (`tests/version.test.js`)
+
+The test measures `node -e "console.log(1)"` and `--version` in the same process and asserts
+the ratio stays under 1.5x. Measured here: fast path 1.08x, graph load 1.81x — so a static
+`import` of `src/cli.js` in `bin/` fails it. An absolute budget would go flaky across machines.
+
 ## Verified against a live 2.3 instance (2026-09-06)
 
 Every read command in this CLI has been run against a real self-hosted OpenPanel with real

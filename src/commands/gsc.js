@@ -82,13 +82,15 @@ const HELP = {
   page: helpFor({
     command: "gsc page",
     description: "One page's search performance, with the queries driving it",
-    usage: `${BIN} gsc page <url> [--range <window>]`,
+    usage: `${BIN} gsc page <url> [--range <window>] [--series]`,
+    flags: { ...gscFlagHelp(), "--series": "Include the per-day series (91 rows on a 90d window)" },
     examples: [`${BIN} gsc page https://example.com/blog/post`],
   }),
   query: helpFor({
     command: "gsc query",
     description: "One search query, with the pages that rank for it",
-    usage: `${BIN} gsc query "<text>" [--range <window>]`,
+    usage: `${BIN} gsc query "<text>" [--range <window>] [--series]`,
+    flags: { ...gscFlagHelp(), "--series": "Include the per-day series (91 rows on a 90d window)" },
     examples: [`${BIN} gsc query "openpanel self hosted"`],
   }),
   opportunities: helpFor({
@@ -183,26 +185,68 @@ async function overview(argv) {
   };
 }
 
+/**
+ * Both detail routes answer with a 91-row per-day series plus the rows that
+ * matter. The series is almost entirely zeros and answers no question on its
+ * own, so it is summed into totals and named with its size rather than dumped
+ * (AXI §2, §4); `--series` is the escape hatch (§3).
+ */
+function detail(payload, breakdown, key, values, dates) {
+  const series = payload?.timeseries ?? [];
+  const rows = payload?.[breakdown] ?? [];
+  const sum = (field) => series.reduce((total, point) => total + (point[field] ?? 0), 0);
+  const clicks = sum("clicks");
+  const impressions = sum("impressions");
+  const ranked = series.filter((point) => (point.position ?? 0) > 0);
+
+  return {
+    window: label(dates),
+    totals: {
+      clicks,
+      impressions,
+      ctr: `${impressions ? ((clicks / impressions) * 100).toFixed(1) : "0.0"}%`,
+      avg_position: ranked.length
+        ? Number((ranked.reduce((total, point) => total + point.position, 0) / ranked.length).toFixed(1))
+        : 0,
+    },
+    ...(rows.length
+      ? { [breakdown]: rows.map(searchRow) }
+      : { [breakdown]: `0 ${breakdown} recorded in this window` }),
+    ...(values.series
+      ? { series: series.map(searchRow) }
+      : {
+          series: `${series.length} daily points not shown`,
+          help: [`Run the same command with --series for the per-day breakdown`],
+        }),
+  };
+}
+
 async function pageDetails(argv) {
   if (wantsHelp(argv)) return HELP.page;
-  const { values, positionals } = parse(argv, { command: "gsc page", flags: DATE_FLAGS });
+  const { values, positionals } = parse(argv, {
+    command: "gsc page",
+    flags: { ...DATE_FLAGS, series: { type: "boolean" } },
+  });
   const page = required(positionals[0], "<url>", "gsc page", `${BIN} gsc page https://example.com/post`);
   const dates = gscWindow(values);
   const payload = await insights(resolveProject(values.project), "/gsc/pages/details", {
     query: { ...dates, page },
   });
-  return { window: label(dates), page, details: payload };
+  return { page, ...detail(payload, "queries", page, values, dates) };
 }
 
 async function queryDetails(argv) {
   if (wantsHelp(argv)) return HELP.query;
-  const { values, positionals } = parse(argv, { command: "gsc query", flags: DATE_FLAGS });
+  const { values, positionals } = parse(argv, {
+    command: "gsc query",
+    flags: { ...DATE_FLAGS, series: { type: "boolean" } },
+  });
   const text = required(positionals[0], "<text>", "gsc query", `${BIN} gsc query "self hosted analytics"`);
   const dates = gscWindow(values);
   const payload = await insights(resolveProject(values.project), "/gsc/queries/details", {
     query: { ...dates, query: text },
   });
-  return { window: label(dates), query: text, details: payload };
+  return { query: text, ...detail(payload, "pages", text, values, dates) };
 }
 
 export const gscCommand = makeDispatcher(
