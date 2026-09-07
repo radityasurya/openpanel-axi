@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.3](https://github.com/radityasurya/openpanel-axi/compare/v0.1.2...v0.1.3) (2026-09-06)
+
+
+### Features
+
+* --fields on sessions, profiles and events ([1a3eede](https://github.com/radityasurya/openpanel-axi/commit/1a3eede39b83ba0accfb9aee9031b6fdb72bf519))
+
+
+### Bug Fixes
+
+* name the whole token when a flag arrives glued to its value ([13fd1f4](https://github.com/radityasurya/openpanel-axi/commit/13fd1f412b524a31eabebb1bca0710f10e69ff84))
+
 ## [0.1.2](https://github.com/radityasurya/openpanel-axi/compare/v0.1.1...v0.1.2) (2026-09-06)
 
 
